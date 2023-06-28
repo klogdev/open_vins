@@ -51,6 +51,9 @@ class ToyManager{
 
         ov_msckf::VioManagerOptions &options;
 
+        /// Boolean if we are initialized or not
+        bool is_initialized_vio = false;
+
         std::shared_ptr<ov_msckf::State> state;
 
         std::shared_ptr<ov_msckf::Propagator> propagator;
