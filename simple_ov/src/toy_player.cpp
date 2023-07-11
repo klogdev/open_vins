@@ -65,6 +65,7 @@ ToyManager::feed_imu_data(const ov_core::ImuData &imu_msg){
     double oldest_time = state->margtimestep();
     // _timestamp is the latest updated step, if it smaller than oldest
     // means we are not initialized yet (no cloned state available)
+    // as we suppose to clone imu state then do update in each iteration
     if(oldest_time > state->_timestamp){
         oldest_time = -1;
     }
@@ -82,7 +83,7 @@ ToyManager::feed_imu_data(const ov_core::ImuData &imu_msg){
     }
 }
 
-ToyManager::track_image_and_update(const ov_core::CameraData &cam_msg){
+void ToyManager::track_image_and_update(const ov_core::CameraData &cam_msg){
     // Start timing for the later debugging
     rT1 = boost::posix_time::microsec_clock::local_time();
 
@@ -114,4 +115,97 @@ ToyManager::track_image_and_update(const ov_core::CameraData &cam_msg){
 
     // timing after handling the new features
     rT2 = boost::posix_time::microsec_clock::local_time();
+
+    // If we do not have VIO initialization, then try_to_initialize
+    // will collect all imu mssages feeded above in the constructor
+    // and update the state->_imu and _cov for the initialization
+    if (!is_initialized_vio) {
+        is_initialized_vio = try_to_initialize(message);
+        if (!is_initialized_vio) {
+        double time_track = (rT2 - rT1).total_microseconds() * 1e-6;
+        PRINT_DEBUG(BLUE "[TIME]: %.4f seconds for tracking\n" RESET, time_track);
+        return;
+        }
+    }
+
+    // Call on our propagate and update function
+    do_feature_propagate_update(message);
 }
+
+void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg){
+    // for the state propagation and landmarks bookkeeping
+    // update&filter the state at the end of this fxn
+
+    // Return if the camera measurement is older than the current time
+    if (state->_timestamp > cam_msg.timestamp) {
+        PRINT_WARNING(YELLOW "image received too old, unable to do anything (prop dt = %3f)\n" RESET,
+                    (cam_msg.timestamp - state->_timestamp));
+        return;
+
+    // Propagate the state forward to the current update time 
+    // (extrapolation via IMU messages/prediction via EoM)
+    // Also augment it with a new clone
+    // NOTE: if the state is already at the given time (can happen in sim)
+    // NOTE: then no need to prop since we already are at the desired timestep
+    if (state->_timestamp != cam_msg.timestamp) {
+        propagator->propagate_and_clone(state, cam_msg.timestamp);
+    }
+    // timing after propagate the state
+    rT3 = boost::posix_time::microsec_clock::local_time();
+    }
+
+    // _clones_IMU load the imu message from current (available) time to
+    // the latest (brand new) time as the poses. 
+    // if there are state more than 5, we could do multiview triangulation
+    if ((int)state->_clones_IMU.size() < std::min(state->_options.max_clone_size, 5)) {
+        PRINT_DEBUG("waiting for enough clone states (%d of %d)....\n", (int)state->_clones_IMU.size(),
+                    std::min(state->_options.max_clone_size, 5));
+        return;
+    }
+
+    // Return if we unable to propagate via extrapolation
+    if (state->_timestamp != cam_msg.timestamp) {
+        PRINT_WARNING(RED "[PROP]: Propagator unable to propagate the state forward in time!\n" RESET);
+        PRINT_WARNING(RED "[PROP]: It has been %.3f since last time we propagated\n" RESET, cam_msg.timestamp - state->_timestamp);
+        return;
+    }
+
+    //////////////////
+    // feature bookkeeping to select SLAM features from MSCKF feature
+    //////////////////
+    // select features into 3 categories: lost, msckf(marg) and slam
+    std::vector<std::shared_ptr<Feature>> feats_lost, feats_marg, feats_slam;
+    // if the feature is not available after last update time, we remove it
+    feats_lost = trackFEATS->get_feature_database()->features_not_containing_newer(state->_timestamp, false, true);
+
+    // mark the features available until last clone time to be marginalized
+    // which is the feature available after _timestamp but first observed 
+    // before the left side of the sliding window
+    if ((int)state->_clones_IMU.size() > state->_options.max_clone_size || (int)state->_clones_IMU.size() > 5) {
+        feats_marg = trackFEATS->get_feature_database()->features_containing(state->margtimestep(), false, true);
+    }
+
+    // assume only use one sensor, i.e. cam0
+
+    // We also need to make sure that the max tracks does not contain any lost features
+    // see below: we need to select slam features from marg features
+    // This could happen if the feature was lost in the last frame, but has a measurement at the marg timestep
+    // i.e. the conflict between lost & marg features
+    it1 = feats_lost.begin();
+    while (it1 != feats_lost.end()) {
+        if (std::find(feats_marg.begin(), feats_marg.end(), (*it1)) != feats_marg.end()) {
+
+        it1 = feats_lost.erase(it1);
+        } else {
+        it1++;
+        }
+    }
+
+    it2 = feats_marg.begin();
+    while (it2 != feats_marg.end()){
+        bool is_max_tracked = false;
+        
+    }
+
+}
+
