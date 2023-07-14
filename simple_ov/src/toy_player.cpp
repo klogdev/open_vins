@@ -170,9 +170,9 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
         return;
     }
 
-    //////////////////
+    //==================================
     // feature bookkeeping to select SLAM features from MSCKF feature
-    //////////////////
+    //==================================
     // select features into 3 categories: lost, msckf(marg) and slam
     std::vector<std::shared_ptr<Feature>> feats_lost, feats_marg, feats_slam;
     // if the feature is not available after last update time, we remove it
@@ -188,7 +188,7 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     // assume only use one sensor, i.e. cam0
 
     // We also need to make sure that the max tracks does not contain any lost features
-    // see below: we need to select slam features from marg features
+    // see below: we need to select slam features from marg features based on the criterion of tracking length
     // This could happen if the feature was lost in the last frame, but has a measurement at the marg timestep
     // i.e. the conflict between lost & marg features
     it1 = feats_lost.begin();
@@ -201,11 +201,94 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
         }
     }
 
+    std::vector<std::shared_ptr<Feature>> feats_maxtracks; //get candidate pool for the slam features
     it2 = feats_marg.begin();
     while (it2 != feats_marg.end()){
         bool is_max_tracked = false;
-        
+        // it2 is a pointer to ov_core::Feature
+        // the timestamps is a map between camera id and list of observation time
+        for (const auto &cam: (*it2)->timestamps){
+            if ((int)cams.second.size() > state->_options.max_clone_size) {
+                is_max_tracked = true;
+                break;
+            }     
+        }
+
+        // the feature reaches max_track is good to be a slam feature
+        if (is_max_tracked){
+            feats_maxtracks.push_back(*it2);
+            feats_marg.erase(it2);
+        }
+        else{
+            it2++;
+        }
     }
 
+    // Append a new SLAM feature if we have the room to do so 
+    // (i.e. the state's feature_SLAM is not full)
+    // Also check that we have waited our delay amount (normally prevents bad first set of slam points)
+    // check where we init startup_time ***
+    if (state->_options.max_slam_features > 0 && message.timestamp - startup_time >= params.dt_slam_delay &&
+        (int)state->_features_SLAM.size() < state->_options.max_slam_features) {
+        // Get the total amount to add, then the max amount that we can add given our marginalize feature array
+        int amount_to_add = (state->_options.max_slam_features) - (int)state->_features_SLAM.size();
+        int valid_amount = (amount_to_add > (int)feats_maxtracks.size()) ? (int)feats_maxtracks.size() : amount_to_add;
+        // If we have at least 1 that we can add, lets add it!
+        // Note: we remove them from the feat_marg array since we don't want to reuse information
+        if (valid_amount > 0) {
+        // insert the features from candidate pool (feats_maxtracks) to the end of feats_slam
+        feats_slam.insert(feats_slam.end(), feats_maxtracks.end() - valid_amount, feats_maxtracks.end());
+        feats_maxtracks.erase(feats_maxtracks.end() - valid_amount, feats_maxtracks.end());
+        }
+    }
+
+    // _feature_SLAM is an SP to ov_core Landmarks, which only contains backend id,
+    // uv coord and should_mard flag; where ov_core Features also has pose info
+
+    // loop the state's feature_SLAM to complete feat_slam for the update
+    for (std::pair<const size_t, ov_core::Landmark> &curr_landmark: state->_features_SLAM){
+        std::shared_ptr<Feature> curr_feat = trackFEATS->get_feature_database()->get_feature(curr_landmark.second->_featid);
+        if(curr_feat != nullptr)
+            feats_slam.push_back(curr_feat);
+        // we assume only one sensor and it've been init as cam0
+        if (curr_feat == nullptr)
+            curr_landmark->should_marg = true;
+        if (curr_landmark.second->update_fail_count > 1)
+            curr_landmark.second->should_marg = true;
+    }
+
+    // marg(remove) slam features with should_marg flag, which we will not care them in the future update
+    // here marginalize is not related to the nullspace but 
+    // here it means that the states of these elements will not be involved in future updates. 
+    // However, their information that can affect the motion states has already been included through the previous steps
+    // like a Markov model
+    ov_msckf::StateHelper::marginalize_slam(state);
+
+    // we now separate slam features into re-observed & new-triangulated
+    // the re-observed one, i.e. already available in features_SLAM, we could directly use it
+    // however for the new one, we need to have extra preprocess, i.e. delayed_init for the future use
+    std::vector<std::shared_ptr<Feature>> feats_slam_DELAYED, feats_slam_UPDATE;
+    for (size_t i = 0; i < feats_slam.size(); i++){
+        if (state->_features_SLAM.find(feats_slam.at(i)->featid) != state->_features_SLAM.end()) {
+        feats_slam_UPDATE.push_back(feats_slam.at(i));
+        } else {
+        feats_slam_DELAYED.push_back(feats_slam.at(i));
+        }
+    }
+
+    // finally, wrap up MSCKF features (i.e. ones not being used for slam updates)
+    // which 1. the lost features; 2. the marg features; 
+    // 3. the candidate pool in the maxtrack but was not selected due to full of state vector
+    std::vector<std::shared_ptr<Feature>> featsup_MSCKF = feats_lost;
+    featsup_MSCKF.insert(featsup_MSCKF.end(), feats_marg.begin(), feats_marg.end());
+    featsup_MSCKF.insert(featsup_MSCKF.end(), feats_maxtracks.begin(), feats_maxtracks.end());
+
+    //=============================
+    // update&filter for the SLAM&MSCKF features
+    //=============================
+    
+
 }
+
+
 

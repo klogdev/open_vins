@@ -15,6 +15,8 @@ struct ImuData;
 struct CameraData;
 class TrackBase;
 class FeatureInitializer;
+class Feature;
+class Landmark;
 }
 
 namespace ov_init {
@@ -67,5 +69,8 @@ class ToyManager{
         /// Our SLAM/ARUCO feature updater
         std::shared_ptr<ov_msckf::UpdaterSLAM> updaterSLAM;
 
-}
+        // Startup time of the filter
+        double startup_time = -1;     
+
+    }
 }  // namespace simple_ov
