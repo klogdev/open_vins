@@ -72,5 +72,7 @@ class ToyManager{
         // Startup time of the filter
         double startup_time = -1;     
 
+        // Good features that where used in the last update (used in visualization)
+        std::vector<Eigen::Vector3d> good_features_MSCKF;
     }
 }  // namespace simple_ov

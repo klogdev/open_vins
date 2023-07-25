@@ -286,8 +286,79 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     //=============================
     // update&filter for the SLAM&MSCKF features
     //=============================
-    
 
+    // Lambda fxn for a sorting based on track length
+    auto compare_feat = [](const std::shared_ptr<Feature> &a, const std::shared_ptr<Feature> &b) -> bool {
+        size_t asize = 0;
+        size_t bsize = 0;
+        for (const auto &pair : a->timestamps)
+        asize += pair.second.size();
+        for (const auto &pair : b->timestamps)
+        bsize += pair.second.size();
+        return asize < bsize;
+    };
+
+    // sort the MSCKF features with long tracks on top
+    std::sort(featsup_MSCKF.begin(), featsup_MSCKF.end(), compare_feat);
+
+    // Pass them to our MSCKF updater
+    // NOTE: cutoff the featsup_MSCKF if we have more then the max, 
+    // i.e. we select the "best" ones (i.e. max tracks) for this update
+    if ((int)featsup_MSCKF.size() > state->_options.max_msckf_in_update)
+        featsup_MSCKF.erase(featsup_MSCKF.begin(), featsup_MSCKF.end() - state->_options.max_msckf_in_update);
+    // update/filter the MSCKF features, in which it need to go through triangulation first
+    updaterMSCKF->update(state, featsup_MSCKF);
+    propagator->invalidate_cache();
+
+    // timing after update the MSCKF features
+    rT4 = boost::posix_time::microsec_clock::local_time();
+
+    // update slam features in a sequential
+    // i.e. update selected features chunk by chunk
+    // NOTE: this will update the cov mat block by block, which miss the couple between blocks
+    // NOTE: as slam features are tracked/triangulated feats, thus we filter them
+    // NOTE: in the updaterSLAM directly (without triangulation)
+    std::vector<std::shared_ptr<Feature>> feats_slam_UPDATE_TEMP;
+    while (!feats_slam_UPDATE.empty()) {
+        // Get sub vector of the features we will update with
+        std::vector<std::shared_ptr<Feature>> featsup_TEMP;
+        featsup_TEMP.insert(featsup_TEMP.begin(), feats_slam_UPDATE.begin(),
+                            feats_slam_UPDATE.begin() + std::min(state->_options.max_slam_in_update, (int)feats_slam_UPDATE.size()));
+        feats_slam_UPDATE.erase(feats_slam_UPDATE.begin(),
+                                feats_slam_UPDATE.begin() + std::min(state->_options.max_slam_in_update, (int)feats_slam_UPDATE.size()));
+        // Do the update
+        updaterSLAM->update(state, featsup_TEMP);
+        feats_slam_UPDATE_TEMP.insert(feats_slam_UPDATE_TEMP.end(), featsup_TEMP.begin(), featsup_TEMP.end());
+    } 
+    // get back the features for slam update after chunking
+    feats_slam_UPDATE = feats_slam_UPDATE_TEMP;
+    // timing after update slam features
+    rT5 = boost::posix_time::microsec_clock::local_time();
+
+    // separately, handle the new observed slam features
+    // i.e. not been used as slam features and available in the features_SLAM yet
+    updaterSLAM->delayed_init(state, feats_slam_DELAYED);
+    rT6 = boost::posix_time::microsec_clock::local_time();
+
+    // clear the MSCKF feats for visualization from last step
+    good_features_MSCKF.clear();
+
+    // Save all the MSCKF features used in the current update
+    for (auto const &feat : featsup_MSCKF) {
+        good_features_MSCKF.push_back(feat->p_FinG);
+        feat->to_delete = true;
+    }
+
+    //=====================
+    // Clean-up&marginalize the features we do not need
+    //=====================
+
+    // this will call DB's attr, which will delete the feats with
+    // "to_delete" flag raised above
+    trackFeats->get_feature_database()->cleanup();
+    // First do anchor change if we are about to lose an anchor pose
+    // i.e. keep the pose in the coordinate of current window
+    updaterSLAM->change_anchors(state);
 }
 
 
