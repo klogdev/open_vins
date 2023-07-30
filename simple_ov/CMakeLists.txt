@@ -124,6 +124,7 @@ file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
 add_library(simple_ov_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
 target_link_libraries(simple_ov_lib ${thirdparty_libraries})
 target_include_directories(simple_ov_lib PUBLIC src/)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../ov_msckf/src)
 install(TARGETS simple_ov_lib
         ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
         LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
