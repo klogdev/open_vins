@@ -96,8 +96,8 @@ int main(int argc, char **argv) {
   }
 
   // Location of the ROS bag we want to read in
-  std::string path_to_bag;
-  nh->param<std::string>("path_bag", path_to_bag, "/home/patrick/datasets/eth/V1_01_easy.bag");
+  std::string path_to_bag = argv[2];
+  nh->param<std::string>("path_bag", path_to_bag, path_to_bag);
   PRINT_DEBUG("[SERIAL]: ros bag path is: %s\n", path_to_bag.c_str());
 
   // Load groundtruth if we have it
