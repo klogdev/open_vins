@@ -1,3 +1,6 @@
+#ifndef SIMPLE_OV_TOYPLAYER_H
+#define SIMPLE_OV_TOYPLAYER_H
+
 #include <Eigen/Eigen>
 #include <iostream>
 #include <memory>
@@ -76,3 +79,4 @@ class ToyManager{
         std::vector<Eigen::Vector3d> good_features_MSCKF;
     }
 }  // namespace simple_ov
+#endif // SIMPLE_OV_TOYPLAYER_H
