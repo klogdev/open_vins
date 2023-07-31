@@ -43,7 +43,7 @@ ToyManager::ToyManager(ov_msckf::VioManagerOptions &options_){
     //assume only use descriptors; instantiate a new TrackDescriptor object,
     //which is derived from TrackBase; have method feed_new_camera(image)&perform_detection
     //contains a member var: database_ to store all features
-    trackFEATS = std::shared_ptr<ov_core::TrackBase>(new TrackDescriptor(
+    trackFeats = std::shared_ptr<ov_core::TrackBase>(new ov_core::TrackDescriptor(
         state->_cam_intrinsics_cameras, init_max_features, state->_params.max_aruco_features, params.use_stereo, params.histogram_method,
         params.fast_threshold, params.grid_x, params.grid_y, params.min_px_dist, params.knn_ratio));
 
@@ -56,8 +56,8 @@ ToyManager::ToyManager(ov_msckf::VioManagerOptions &options_){
     initializer = std::make_shared<ov_init::InertialInitializer>(params.init_options, trackFEATS->get_feature_database());
 
     // Initialize the updaters for the bookkeeping; we now ignore the handling of zero update
-    updaterMSCKF = std::make_shared<UpdaterMSCKF>(params.msckf_options, params.featinit_options);
-    updaterSLAM = std::make_shared<UpdaterSLAM>(params.slam_options, params.aruco_options, params.featinit_options);
+    updaterMSCKF = std::make_shared<ov_msckf::UpdaterMSCKF>(params.msckf_options, params.featinit_options);
+    updaterSLAM = std::make_shared<ov_msckf::UpdaterSLAM>(params.slam_options, params.aruco_options, params.featinit_options);
 }
 
 ToyManager::feed_imu_data(const ov_core::ImuData &imu_msg){
