@@ -20,6 +20,7 @@ class TrackBase;
 class FeatureInitializer;
 class Feature;
 class Landmark;
+class YamlParser;
 }
 
 namespace ov_init {

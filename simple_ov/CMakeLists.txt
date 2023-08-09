@@ -117,26 +117,26 @@ if (NOT catkin_FOUND OR NOT ENABLE_ROS)
 endif ()
 
 # Make the shared library
-list(APPEND LIBRARY_SOURCES
-  src/toy_player.cpp
-)
-file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
-add_library(simple_ov_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
-target_link_libraries(simple_ov_lib ${thirdparty_libraries})
-target_include_directories(simple_ov_lib PUBLIC src/)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../ov_msckf/src)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../ov_init/src)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../ov_core/src)
-install(TARGETS simple_ov_lib
-        ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-        LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-        RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
-install(DIRECTORY src/
-        DESTINATION ${CATKIN_GLOBAL_INCLUDE_DESTINATION}
-        FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
-)
+# list(APPEND LIBRARY_SOURCES
+#   src/toy_player.cpp
+# )
+# file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
+# add_library(simple_ov_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
+# target_link_libraries(simple_ov_lib ${thirdparty_libraries})
+# target_include_directories(simple_ov_lib PUBLIC src/)
+# include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../ov_msckf/src)
+# include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../ov_init/src)
+# include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../ov_core/src)
+# install(TARGETS simple_ov_lib
+#         ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+#         LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+#         RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+# )
+# install(DIRECTORY src/
+#         DESTINATION ${CATKIN_GLOBAL_INCLUDE_DESTINATION}
+#         FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
+# )
 
-# Make the binary
-add_executable(toy_player_test src/toy_player_test.cpp)
-target_link_libraries(toy_player_test ov_init_lib ov_msckf_lib ${thirdparty_libraries})
+# # Make the binary
+# add_executable(toy_player_test src/toy_player_test.cpp)
+# target_link_libraries(toy_player_test ov_init_lib ov_msckf_lib ${thirdparty_libraries})
