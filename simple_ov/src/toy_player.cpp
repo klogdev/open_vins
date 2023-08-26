@@ -3,7 +3,14 @@
 #include "state/StateHelper.h"
 #include "update/UpdaterMSCKF.h"
 #include "update/UpdaterSLAM.h"
-#include "update/UpdaterZeroVelocity.h"
+#include "core/VioManager.h"
+
+#include "feat/Feature.h"
+#include "feat/FeatureDatabase.h"
+#include "init/InertialInitializer.h"
+#include "track/TrackBase.h"
+#include "track/TrackDescriptor.h"
+#include "types/Landmark.h"
 
 #include <Eigen/Core>
 #include <Eigen/StdVector>
@@ -11,10 +18,10 @@
 #include "toy_player.h"
 
 namespace simple_ov {
-
+ class ToyManager;
 }  // namespace simple_ov
 
-ToyManager::ToyManager(ov_msckf::VioManagerOptions &options_){
+simple_ov::ToyManager::ToyManager(ov_msckf::VioManagerOptions &options_){
     this->params = options_;
 
     state = std::make_shared<ov_msckf::State>(params.state_options);
@@ -43,8 +50,8 @@ ToyManager::ToyManager(ov_msckf::VioManagerOptions &options_){
     //assume only use descriptors; instantiate a new TrackDescriptor object,
     //which is derived from TrackBase; have method feed_new_camera(image)&perform_detection
     //contains a member var: database_ to store all features
-    trackFeats = std::shared_ptr<ov_core::TrackBase>(new ov_core::TrackDescriptor(
-        state->_cam_intrinsics_cameras, init_max_features, state->_params.max_aruco_features, params.use_stereo, params.histogram_method,
+    trackFEATS = std::shared_ptr<ov_core::TrackBase>(new ov_core::TrackDescriptor(
+        state->_cam_intrinsics_cameras, init_max_features, state->_options.max_aruco_features, params.use_stereo, params.histogram_method,
         params.fast_threshold, params.grid_x, params.grid_y, params.min_px_dist, params.knn_ratio));
 
     // Initialize state propagator, for the implementation of the EoM
@@ -60,7 +67,7 @@ ToyManager::ToyManager(ov_msckf::VioManagerOptions &options_){
     updaterSLAM = std::make_shared<ov_msckf::UpdaterSLAM>(params.slam_options, params.aruco_options, params.featinit_options);
 }
 
-ToyManager::feed_imu_data(const ov_core::ImuData &imu_msg){
+void simple_ov::ToyManager::feed_imu_data(const ov_core::ImuData &imu_msg){
     // the latest cloned time/to be marginalized time
     double oldest_time = state->margtimestep();
     // _timestamp is the latest updated step, if it smaller than oldest
@@ -72,18 +79,18 @@ ToyManager::feed_imu_data(const ov_core::ImuData &imu_msg){
     // we need to trace the time of initialization with a delay between
     // cam to imu; also manually backward 0.1 for safe
     if (!is_initialized_vio) {
-    oldest_time = message.timestamp - params.init_options.init_window_time + state->_calib_dt_CAMtoIMU->value()(0) - 0.10;
+    oldest_time = imu_msg.timestamp - params.init_options.init_window_time + state->_calib_dt_CAMtoIMU->value()(0) - 0.10;
     }
     // push imu messages to both propagator & initializer anyway;
     // if not init yet, the propagator will early return when try to prop
-    propagator->feed_imu(message, oldest_time);
+    propagator->feed_imu(imu_msg, oldest_time);
 
     if (!is_initialized_vio) {
-        initializer->feed_imu(message, oldest_time);
+        initializer->feed_imu(imu_msg, oldest_time);
     }
 }
 
-void ToyManager::track_image_and_update(const ov_core::CameraData &cam_msg){
+void simple_ov::ToyManager::track_image_and_update(const ov_core::CameraData &cam_msg){
     // Start timing for the later debugging
     rT1 = boost::posix_time::microsec_clock::local_time();
 
@@ -119,8 +126,10 @@ void ToyManager::track_image_and_update(const ov_core::CameraData &cam_msg){
     // If we do not have VIO initialization, then try_to_initialize
     // will collect all imu mssages feeded above in the constructor
     // and update the state->_imu and _cov for the initialization
+    ov_msckf::VioManager vio_manager(params);  // Create an instance of the class, as try_to_xx is not a static member
+
     if (!is_initialized_vio) {
-        is_initialized_vio = try_to_initialize(message);
+        is_initialized_vio = vio_manager.try_to_initialize(message);
         if (!is_initialized_vio) {
         double time_track = (rT2 - rT1).total_microseconds() * 1e-6;
         PRINT_DEBUG(BLUE "[TIME]: %.4f seconds for tracking\n" RESET, time_track);
@@ -132,7 +141,7 @@ void ToyManager::track_image_and_update(const ov_core::CameraData &cam_msg){
     do_feature_propagate_update(message);
 }
 
-void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg){
+void simple_ov::ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg){
     // for the state propagation and landmarks bookkeeping
     // update&filter the state at the end of this fxn
 
@@ -174,7 +183,7 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     // feature bookkeeping to select SLAM features from MSCKF feature
     //==================================
     // select features into 3 categories: lost, msckf(marg) and slam
-    std::vector<std::shared_ptr<Feature>> feats_lost, feats_marg, feats_slam;
+    std::vector<std::shared_ptr<ov_core::Feature>> feats_lost, feats_marg, feats_slam;
     // if the feature is not available after last update time, we remove it
     feats_lost = trackFEATS->get_feature_database()->features_not_containing_newer(state->_timestamp, false, true);
 
@@ -191,7 +200,7 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     // see below: we need to select slam features from marg features based on the criterion of tracking length
     // This could happen if the feature was lost in the last frame, but has a measurement at the marg timestep
     // i.e. the conflict between lost & marg features
-    it1 = feats_lost.begin();
+    auto it1 = feats_lost.begin();
     while (it1 != feats_lost.end()) {
         if (std::find(feats_marg.begin(), feats_marg.end(), (*it1)) != feats_marg.end()) {
 
@@ -201,14 +210,14 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
         }
     }
 
-    std::vector<std::shared_ptr<Feature>> feats_maxtracks; //get candidate pool for the slam features
-    it2 = feats_marg.begin();
+    std::vector<std::shared_ptr<ov_core::Feature>> feats_maxtracks; //get candidate pool for the slam features
+    auto it2 = feats_marg.begin();
     while (it2 != feats_marg.end()){
         bool is_max_tracked = false;
         // it2 is a pointer to ov_core::Feature
         // the timestamps is a map between camera id and list of observation time
         for (const auto &cam: (*it2)->timestamps){
-            if ((int)cams.second.size() > state->_options.max_clone_size) {
+            if ((int)cam.second.size() > state->_options.max_clone_size) {
                 is_max_tracked = true;
                 break;
             }     
@@ -228,7 +237,7 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     // (i.e. the state's feature_SLAM is not full)
     // Also check that we have waited our delay amount (normally prevents bad first set of slam points)
     // check where we init startup_time ***
-    if (state->_options.max_slam_features > 0 && message.timestamp - startup_time >= params.dt_slam_delay &&
+    if (state->_options.max_slam_features > 0 && cam_msg.timestamp - startup_time >= params.dt_slam_delay &&
         (int)state->_features_SLAM.size() < state->_options.max_slam_features) {
         // Get the total amount to add, then the max amount that we can add given our marginalize feature array
         int amount_to_add = (state->_options.max_slam_features) - (int)state->_features_SLAM.size();
@@ -246,13 +255,13 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     // uv coord and should_mard flag; where ov_core Features also has pose info
 
     // loop the state's feature_SLAM to complete feat_slam for the update
-    for (std::pair<const size_t, ov_core::Landmark> &curr_landmark: state->_features_SLAM){
-        std::shared_ptr<Feature> curr_feat = trackFEATS->get_feature_database()->get_feature(curr_landmark.second->_featid);
+    for (std::pair<const size_t, std::shared_ptr<ov_type::Landmark>> &curr_landmark: state->_features_SLAM){
+        std::shared_ptr<ov_core::Feature> curr_feat = trackFEATS->get_feature_database()->get_feature(curr_landmark.second->_featid);
         if(curr_feat != nullptr)
             feats_slam.push_back(curr_feat);
         // we assume only one sensor and it've been init as cam0
         if (curr_feat == nullptr)
-            curr_landmark->should_marg = true;
+            curr_landmark.second->should_marg = true;
         if (curr_landmark.second->update_fail_count > 1)
             curr_landmark.second->should_marg = true;
     }
@@ -262,12 +271,14 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     // here it means that the states of these elements will not be involved in future updates. 
     // However, their information that can affect the motion states has already been included through the previous steps
     // like a Markov model
+
+    // noticed this is a static member fn, so we could call it without init an instance of StateHelper
     ov_msckf::StateHelper::marginalize_slam(state);
 
     // we now separate slam features into re-observed & new-triangulated
     // the re-observed one, i.e. already available in features_SLAM, we could directly use it
     // however for the new one, we need to have extra preprocess, i.e. delayed_init for the future use
-    std::vector<std::shared_ptr<Feature>> feats_slam_DELAYED, feats_slam_UPDATE;
+    std::vector<std::shared_ptr<ov_core::Feature>> feats_slam_DELAYED, feats_slam_UPDATE;
     for (size_t i = 0; i < feats_slam.size(); i++){
         if (state->_features_SLAM.find(feats_slam.at(i)->featid) != state->_features_SLAM.end()) {
         feats_slam_UPDATE.push_back(feats_slam.at(i));
@@ -279,7 +290,7 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     // finally, wrap up MSCKF features (i.e. ones not being used for slam updates)
     // which 1. the lost features; 2. the marg features; 
     // 3. the candidate pool in the maxtrack but was not selected due to full of state vector
-    std::vector<std::shared_ptr<Feature>> featsup_MSCKF = feats_lost;
+    std::vector<std::shared_ptr<ov_core::Feature>> featsup_MSCKF = feats_lost;
     featsup_MSCKF.insert(featsup_MSCKF.end(), feats_marg.begin(), feats_marg.end());
     featsup_MSCKF.insert(featsup_MSCKF.end(), feats_maxtracks.begin(), feats_maxtracks.end());
 
@@ -288,7 +299,7 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     //=============================
 
     // Lambda fxn for a sorting based on track length
-    auto compare_feat = [](const std::shared_ptr<Feature> &a, const std::shared_ptr<Feature> &b) -> bool {
+    auto compare_feat = [](const std::shared_ptr<ov_core::Feature> &a, const std::shared_ptr<ov_core::Feature> &b) -> bool {
         size_t asize = 0;
         size_t bsize = 0;
         for (const auto &pair : a->timestamps)
@@ -318,10 +329,10 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
     // NOTE: this will update the cov mat block by block, which miss the couple between blocks
     // NOTE: as slam features are tracked/triangulated feats, thus we filter them
     // NOTE: in the updaterSLAM directly (without triangulation)
-    std::vector<std::shared_ptr<Feature>> feats_slam_UPDATE_TEMP;
+    std::vector<std::shared_ptr<ov_core::Feature>> feats_slam_UPDATE_TEMP;
     while (!feats_slam_UPDATE.empty()) {
         // Get sub vector of the features we will update with
-        std::vector<std::shared_ptr<Feature>> featsup_TEMP;
+        std::vector<std::shared_ptr<ov_core::Feature>> featsup_TEMP;
         featsup_TEMP.insert(featsup_TEMP.begin(), feats_slam_UPDATE.begin(),
                             feats_slam_UPDATE.begin() + std::min(state->_options.max_slam_in_update, (int)feats_slam_UPDATE.size()));
         feats_slam_UPDATE.erase(feats_slam_UPDATE.begin(),
@@ -355,7 +366,7 @@ void ToyManager::do_feature_propagate_update(const ov_core::CameraData &cam_msg)
 
     // this will call DB's attr, which will delete the feats with
     // "to_delete" flag raised above
-    trackFeats->get_feature_database()->cleanup();
+    trackFEATS->get_feature_database()->cleanup();
     // First do anchor change if we are about to lose an anchor pose
     // i.e. keep the pose in the coordinate of current window
     updaterSLAM->change_anchors(state);

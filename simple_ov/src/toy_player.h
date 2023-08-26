@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <boost/filesystem.hpp>
 
 #include "cam/CamEqui.h"
 #include "cam/CamRadtan.h"
@@ -17,10 +18,15 @@ namespace ov_core {
 struct ImuData;
 struct CameraData;
 class TrackBase;
+class TrackDescriptor;
 class FeatureInitializer;
+class FeatureDatabase;
 class Feature;
-class Landmark;
 class YamlParser;
+}
+
+namespace ov_type {
+class Landmark;
 }
 
 namespace ov_init {
@@ -28,6 +34,7 @@ class InertialInitializer;
 } 
 
 namespace ov_msckf{
+    class VioManager;
     class VioManagerOptions;
     class State;
     class StateHelper;
@@ -51,11 +58,15 @@ class ToyManager{
         void feed_camera_data(const ov_core::CameraData &cam_msg);
 
     protected:
+        /// Manager parameters
+        ov_msckf::VioManagerOptions params;
+
         void track_image_and_update(const ov_core::CameraData &cam_msg);
 
         void do_feature_propagate_update(const ov_core::CameraData &cam_msg);
 
-        ov_msckf::VioManagerOptions &options;
+        /// State initializer
+        std::shared_ptr<ov_init::InertialInitializer> initializer;
 
         /// Boolean if we are initialized or not
         bool is_initialized_vio = false;
@@ -78,6 +89,8 @@ class ToyManager{
 
         // Good features that where used in the last update (used in visualization)
         std::vector<Eigen::Vector3d> good_features_MSCKF;
+
+        boost::posix_time::ptime rT1, rT2, rT3, rT4, rT5, rT6, rT7;
     };
 }  // namespace simple_ov
 #endif // SIMPLE_OV_TOYPLAYER_H
